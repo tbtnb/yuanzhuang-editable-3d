@@ -1,0 +1,28 @@
+/* Canvas 2D compatibility renderer. Same 3D scene and camera; no GPU required. */
+'use strict';
+(()=>{
+const N=Nest3D;
+class CanvasRenderer{
+ constructor(canvas,textures){this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});if(!this.ctx)throw Error('当前浏览器不能创建绘图画布。');this.textures=textures;this.items=[];this.arch=[];this.azimuth=-.60;this.elevation=.72;this.zoom=1;this.target=[0,.65,0];this.night=0;this.top=false;this.walls=true;this.ceiling=false;this.shadowExt=false;this.engine='canvas';this.sun=N.norm([5,9,4]);this.faces=[];this.texturePixels={};this.resize();}
+ upload(parts){return parts.map(p=>({...p,count:p.data.length/12}));}
+ dispose(){}
+ frame(){this.camera();const ctx=this.ctx,dpr=this.canvas.width/this.width;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=this.night>.5?'#ddd4c3':'#f0ede5';ctx.fillRect(0,0,this.width,this.height);const faces=[],VP=this.VP,view=[-this.forward[0],-this.forward[1],-this.forward[2]],modelMap=this.map;
+ for(const o of [...this.arch,...this.items]){if(o.visible===false||o.parent&&modelMap.get(o.parent)?.visible===false||o.ceiling&&!this.ceiling||o.wall&&(!this.walls||this.top)||o.noTop&&this.top)continue;const m=o.model||this.matrix(o,modelMap),proj=N.mm(VP,m);for(const part of o.parts){const data=part.data;if(!data)continue;const textured=!!part.tex,tex=this.textures[part.tex];for(let i=0;i<data.length;i+=36){let nx=0,ny=0,nz=0;for(let j=0;j<3;j++){let k=i+j*12;nx+=data[k+3];ny+=data[k+4];nz+=data[k+5];}const len=Math.hypot(nx,ny,nz)||1;nx/=len;ny/=len;nz/=len;const wx=m[0]*nx+m[4]*ny+m[8]*nz,wy=m[1]*nx+m[5]*ny+m[9]*nz,wz=m[2]*nx+m[6]*ny+m[10]*nz;if(!textured&&wx*view[0]+wy*view[1]+wz*view[2]<.002)continue;
+ const v=[];let depth=0;for(let j=0;j<3;j++){let k=i+j*12,x=data[k],y=data[k+1],z=data[k+2];const px=proj[0]*x+proj[4]*y+proj[8]*z+proj[12],py=proj[1]*x+proj[5]*y+proj[9]*z+proj[13],pz=proj[2]*x+proj[6]*y+proj[10]*z+proj[14];v.push([(px*.5+.5)*this.width,(.5-py*.5)*this.height,data[k+6],data[k+7],pz]);depth+=pz;}
+ const area=(v[1][0]-v[0][0])*(v[2][1]-v[0][1])-(v[1][1]-v[0][1])*(v[2][0]-v[0][0]);if(Math.abs(area)<.14||v.every(p=>p[0]<-5)||v.every(p=>p[0]>this.width+5)||v.every(p=>p[1]<-5)||v.every(p=>p[1]>this.height+5))continue;let lit=.72+.1*wy+.3*Math.max(0,wx*this.sun[0]+wy*this.sun[1]+wz*this.sun[2]);let t=this.night;const rgb=[data[i+8]*lit*(1.035+t*.025),data[i+9]*lit*(1.01-t*.10),data[i+10]*lit*(.96-t*.18)].map(v=>Math.round(Math.max(0,Math.min(1,v))*255));faces.push({v,depth:depth/3,fill:`rgb(${rgb.join(',')})`,rgb,light:lit,base:[data[i+8],data[i+9],data[i+10]],tex,part,id:o.helper?0:o.pickId||0,area});}}}
+ this.raster(faces);this.faces=faces;}
+ raster(faces){const W=this.canvas.width,H=this.canvas.height,sx=W/this.width,sy=H/this.height,ctx=this.ctx;let image=ctx.createImageData(W,H),rgba=image.data,zbuf=new Float32Array(W*H),ids=new Uint16Array(W*H);zbuf.fill(Infinity);const bg=this.night>.5?[221,212,195]:[240,237,229];for(let i=0;i<rgba.length;i+=4){rgba[i]=bg[0];rgba[i+1]=bg[1];rgba[i+2]=bg[2];rgba[i+3]=255;}
+ for(const f of faces){const v=f.v,x0=v[0][0]*sx,y0=v[0][1]*sy,x1=v[1][0]*sx,y1=v[1][1]*sy,x2=v[2][0]*sx,y2=v[2][1]*sy,den=(y1-y2)*(x0-x2)+(x2-x1)*(y0-y2);if(Math.abs(den)<.001)continue;const minx=Math.max(0,Math.floor(Math.min(x0,x1,x2))),maxx=Math.min(W-1,Math.ceil(Math.max(x0,x1,x2))),miny=Math.max(0,Math.floor(Math.min(y0,y1,y2))),maxy=Math.min(H-1,Math.ceil(Math.max(y0,y1,y2))),da=(y1-y2)/den,db=(y2-y0)/den,ca=(x2-x1)/den,cb=(x0-x2)/den;
+ let pixels=null,tw=0,th=0;if(f.tex){tw=f.tex.width;th=f.tex.height;pixels=this.texturePixels[f.part.tex];if(!pixels){pixels=f.tex.getContext('2d').getImageData(0,0,tw,th).data;this.texturePixels[f.part.tex]=pixels;}}
+ let z0=v[0][4],z1=v[1][4],z2=v[2][4],light=f.part.glow?1:f.light,night=this.night,tint=[f.base[0]*light*(f.part.glow?1:1.035+night*.025),f.base[1]*light*(f.part.glow?1:1.01-night*.10),f.base[2]*light*(f.part.glow?1:.96-night*.18)];
+ for(let y=miny;y<=maxy;y++){let aa=((y1-y2)*(minx+.5-x2)+(x2-x1)*(y+.5-y2))/den,bb=((y2-y0)*(minx+.5-x2)+(x0-x2)*(y+.5-y2))/den;let idx=y*W+minx;
+ for(let x=minx;x<=maxx;x++,idx++,aa+=da,bb+=db){const cc=1-aa-bb;if(aa<-.00001||bb<-.00001||cc<-.00001)continue;let depth=aa*z0+bb*z1+cc*z2;if(depth>=zbuf[idx])continue;let r=f.rgb[0],g=f.rgb[1],b=f.rgb[2],alpha=f.part.alpha;if(pixels){const u=Math.min(tw-1,Math.max(0,Math.floor((aa*v[0][2]+bb*v[1][2]+cc*v[2][2])*tw))),vv=Math.min(th-1,Math.max(0,Math.floor((aa*v[0][3]+bb*v[1][3]+cc*v[2][3])*th))),k=(vv*tw+u)*4;alpha*=pixels[k+3]/255;if(alpha<.05)continue;r=pixels[k]*tint[0];g=pixels[k+1]*tint[1];b=pixels[k+2]*tint[2];}let off=idx*4;if(alpha<.98){rgba[off]=r*alpha+rgba[off]*(1-alpha);rgba[off+1]=g*alpha+rgba[off+1]*(1-alpha);rgba[off+2]=b*alpha+rgba[off+2]*(1-alpha);}else{rgba[off]=r;rgba[off+1]=g;rgba[off+2]=b;}zbuf[idx]=depth;ids[idx]=f.id;}}
+ }ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(image,0,0);this.pickIds=ids;}
+
+ pick(x,y){const xx=Math.max(0,Math.min(this.canvas.width-1,Math.floor(x/this.width*this.canvas.width))),yy=Math.max(0,Math.min(this.canvas.height-1,Math.floor(y/this.height*this.canvas.height))),id=this.pickIds?.[yy*this.canvas.width+xx];return this.items.find(o=>o.pickId===id)||null;}
+
+}
+for(const name of ['resize','camera','point','project','matrix','setScene'])CanvasRenderer.prototype[name]=N.Renderer.prototype[name];
+CanvasRenderer.prototype.resize=function(){const r=this.canvas.getBoundingClientRect();this.width=r.width;this.height=r.height;this.canvas.width=Math.max(1,Math.round(r.width));this.canvas.height=Math.max(1,Math.round(r.height));this.camera();};
+N.CanvasRenderer=CanvasRenderer;
+})();
